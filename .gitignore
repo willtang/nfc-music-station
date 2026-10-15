@@ -1,0 +1,48 @@
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Arduino & ESP32 Build Outputs
+*.hex
+*.elf
+*.bin
+*.eep
+*.lst
+*.map
+*.d
+*.o
+*.a
+
+# Arduino IDE / CLI Caches and Build Directories
+build/
+*.cache
+sketch.yaml
+.arduino15/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.clangd/
+
+# Editor & IDE Directories
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/c_cpp_properties.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Sensitive configuration & credentials
+secrets.h
+config.h
+*.local.*
+.env
