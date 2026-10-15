@@ -9,7 +9,7 @@
 #elif 0
   #include <PN532_HSU.h>
   #include <PN532.h>
-      
+
   PN532_HSU pn532hsu(Serial1);
   PN532 nfc(pn532hsu);
 #else 
@@ -22,7 +22,70 @@
 
 #include <NfcAdapter.h>
 
+#include <WiFi.h>
+#include <WiFiManager.h>
+#include <HTTPClient.h>
+
 NfcAdapter nfc = NfcAdapter(pn532i2c);
+
+// Callback executed when WiFiManager enters AP (Access Point) mode
+void configModeCallback(WiFiManager *myWiFiManager) {
+  Serial.println("\n------------------------------------------");
+  Serial.println("[Wi-Fi] No saved Wi-Fi credentials found (or connection failed).");
+  Serial.println("[Wi-Fi] Starting Access Point (AP) Configuration Portal...");
+  Serial.print("[Wi-Fi] AP SSID:        ");
+  Serial.println(myWiFiManager->getConfigPortalSSID());
+  Serial.print("[Wi-Fi] AP IP Address:  http://");
+  Serial.println(WiFi.softAPIP());
+  Serial.println("[Wi-Fi] Setup Instructions:");
+  Serial.print("  1. Connect your phone or computer to Wi-Fi network: ");
+  Serial.println(myWiFiManager->getConfigPortalSSID());
+  Serial.print("  2. Open browser and go to: http://");
+  Serial.println(WiFi.softAPIP());
+  Serial.println("  3. Select your local Wi-Fi network, enter password, and save.");
+  Serial.println("------------------------------------------");
+}
+
+// Connect to Wi-Fi or launch captive portal AP if credentials are not configured
+void initWiFi() {
+  Serial.println("\n------------------------------------------");
+  Serial.println("--- Wi-Fi Initialization ---");
+  Serial.println("------------------------------------------");
+
+  WiFiManager wm;
+
+  // Set web configuration portal branding
+  wm.setTitle("NFC Music Station Setup");
+
+  // Register callback when AP mode is triggered
+  wm.setAPCallback(configModeCallback);
+
+  // Optional: Set portal timeout in seconds (0 = wait indefinitely until user configures Wi-Fi)
+  // wm.setConfigPortalTimeout(180);
+
+  // Optional: Uncomment to clear stored Wi-Fi credentials for debugging
+  // wm.resetSettings();
+
+  Serial.println("[Wi-Fi] Checking saved Wi-Fi connection...");
+
+  // autoConnect attempts to connect using saved credentials in NVS.
+  // If no saved Wi-Fi data exists or connection fails, it starts an AP
+  // named "NFC-Music-Station-Setup" and runs a captive portal web page.
+  bool connected = wm.autoConnect("NFC-Music-Station-Setup");
+
+  if (!connected) {
+    Serial.println("\n[Wi-Fi] WARNING: Failed to connect to Wi-Fi or config portal timed out.");
+  } else {
+    Serial.println("\n[Wi-Fi] Connected successfully!");
+    Serial.print("[Wi-Fi] SSID:       ");
+    Serial.println(WiFi.SSID());
+    Serial.print("[Wi-Fi] IP Address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("[Wi-Fi] Signal:     ");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
+  }
+}
 
 void setup(void) {
   // delay(3000);
@@ -33,10 +96,16 @@ void setup(void) {
   Serial.println("--- PN532 NDEF Record Reader Initialized ---");
   Serial.println("==========================================");
 
-  // Initialize the NDEF adapter layer
+  // Initialize the NDEF adapter layer (module connection)
   nfc.begin();
+  Serial.println("[NFC] PN532 module initialized successfully.");
+
+  // Connect to Wi-Fi after module connection
+  initWiFi();
   
-  Serial.println("\nPlace your NFC card close to the antenna...");
+  Serial.println("\n==========================================");
+  Serial.println("Place your NFC card close to the antenna...");
+  Serial.println("==========================================");
 }
 
 void loop(void) {
@@ -87,6 +156,12 @@ void loop(void) {
             Serial.print(">>> DECODED URL: "); 
             Serial.println(fullUrl);
             Serial.println("------------------------------------------");
+            
+            if (WiFi.status() == WL_CONNECTED) {
+              Serial.println("[Wi-Fi] Status: Online (IP: " + WiFi.localIP().toString() + ")");
+            } else {
+              Serial.println("[Wi-Fi] Status: Offline");
+            }
             
             // Free the allocated memory allocation immediately to avoid future system crashes
             free(payloadBuffer);

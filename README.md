@@ -38,6 +38,9 @@ Install the following libraries using the **Arduino IDE Library Manager** (`Sket
 2. **NDEF Library** (by Don Coleman)
    - Source: [don/NDEF](https://github.com/don/NDEF)
    - Enables parsing of NDEF messages, payloads, and record types.
+3. **WiFiManager** (by tzapu)
+   - Source: [tzapu/WiFiManager](https://github.com/tzapu/WiFiManager)
+   - Provides runtime Wi-Fi credentials management with an automatic Access Point (AP) captive portal for network selection and password setup.
 
 ---
 
@@ -52,7 +55,20 @@ Install the following libraries using the **Arduino IDE Library Manager** (`Sket
 5. Click **Upload**.
 6. Open the **Serial Monitor** at **115200 baud**.
 
-### 2. Prepare Your NFC Tags
+### 2. Wi-Fi Setup (First Boot / AP Mode)
+
+On initial startup (or if the saved network is unavailable):
+1. The ESP32 initializes the PN532 NFC module first.
+2. If no saved Wi-Fi connection data is found, it automatically starts an Access Point named **`NFC-Music-Station-Setup`**.
+3. Connect to **`NFC-Music-Station-Setup`** from your phone or PC.
+4. The captive portal web page will open automatically (or navigate to `http://192.168.4.1`).
+5. Select your local Wi-Fi SSID from the scanned list, enter the password, and click **Save**.
+6. The ESP32 saves the credentials and connects automatically. On subsequent boots, it connects directly without creating an AP.
+
+> [!TIP]
+> To reset stored Wi-Fi credentials for reconfiguration or testing, uncomment `wm.resetSettings();` in `initWiFi()` inside [`nfc-music-station/nfc-music-station.ino`](nfc-music-station/nfc-music-station.ino).
+
+### 3. Prepare Your NFC Tags
 
 Use a smartphone app like **NFC Tools** (available on iOS and Android) to write NDEF records to your tags:
 
@@ -64,7 +80,7 @@ Use a smartphone app like **NFC Tools** (available on iOS and Android) to write 
    - **Apple Music / YouTube Music / Sonos URI**
 4. Tap **Write** and hold your NFC card against your phone's NFC antenna.
 
-### 3. Test Tag Scanning
+### 4. Test Tag Scanning
 
 Bring your configured NFC card near the PN532 antenna. The Serial Monitor will output:
 
@@ -72,8 +88,20 @@ Bring your configured NFC card near the PN532 antenna. The Serial Monitor will o
 ==========================================
 --- PN532 NDEF Record Reader Initialized ---
 ==========================================
+[NFC] PN532 module initialized successfully.
 
+------------------------------------------
+--- Wi-Fi Initialization ---
+------------------------------------------
+[Wi-Fi] Checking saved Wi-Fi connection...
+[Wi-Fi] Connected successfully!
+[Wi-Fi] SSID:       Home-Network
+[Wi-Fi] IP Address: 192.168.1.120
+[Wi-Fi] Signal:     -54 dBm
+
+==========================================
 Place your NFC card close to the antenna...
+==========================================
 
 >>> Tag Detected! Reading NDEF Structure...
 ------------------------------------------
@@ -82,6 +110,7 @@ UID Value:    04 A1 B2 C3 D4 E5 F6
 ------------------------------------------
 >>> DECODED URL: https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
 ------------------------------------------
+[Wi-Fi] Status: Online (IP: 192.168.1.120)
 ==========================================
 ```
 
