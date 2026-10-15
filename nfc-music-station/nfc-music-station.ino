@@ -26,10 +26,183 @@
 #include <WiFiManager.h>
 #include <HTTPClient.h>
 
+// Remote cliamp server configuration
+// Remote cliamp is running in daemon mode, and the socket is redirected to TCP port 8787
+const char* CLIAMP_SERVER_IP = "192.168.0.102";
+const uint16_t CLIAMP_SERVER_PORT = 8787;
+
 NfcAdapter nfc = NfcAdapter(pn532i2c);
 
 // Track active NFC card UID to prevent duplicate processing
 String savedCardId = "";
+
+// Helper function to decode URL percent-encoded characters (e.g. %20 -> space, + -> space)
+String urlDecode(const String &input) {
+  String decoded = "";
+  for (unsigned int i = 0; i < input.length(); i++) {
+    char c = input.charAt(i);
+    if (c == '%') {
+      if (i + 2 < input.length()) {
+        char a = input.charAt(i + 1);
+        char b = input.charAt(i + 2);
+        if (isxdigit(a) && isxdigit(b)) {
+          int val = 0;
+          if (a >= '0' && a <= '9') val += (a - '0') << 4;
+          else if (a >= 'a' && a <= 'f') val += (a - 'a' + 10) << 4;
+          else if (a >= 'A' && a <= 'F') val += (a - 'A' + 10) << 4;
+
+          if (b >= '0' && b <= '9') val += (b - '0');
+          else if (b >= 'a' && b <= 'f') val += (b - 'a' + 10);
+          else if (b >= 'A' && b <= 'F') val += (b - 'A' + 10);
+
+          decoded += (char)val;
+          i += 2;
+          continue;
+        }
+      }
+      decoded += c;
+    } else if (c == '+') {
+      decoded += ' ';
+    } else {
+      decoded += c;
+    }
+  }
+  return decoded;
+}
+
+// Helper function to escape special characters for JSON payloads
+String escapeJsonString(const String &input) {
+  String output = "";
+  for (unsigned int i = 0; i < input.length(); i++) {
+    char c = input.charAt(i);
+    if (c == '"') {
+      output += "\\\"";
+    } else if (c == '\\') {
+      output += "\\\\";
+    } else if (c == '\b') {
+      output += "\\b";
+    } else if (c == '\f') {
+      output += "\\f";
+    } else if (c == '\n') {
+      output += "\\n";
+    } else if (c == '\r') {
+      output += "\\r";
+    } else if (c == '\t') {
+      output += "\\t";
+    } else {
+      output += c;
+    }
+  }
+  return output;
+}
+
+// Read a newline-delimited response line from cliamp
+String readCliampResponse(WiFiClient &client, unsigned long timeoutMs = 2000) {
+  String response = "";
+  unsigned long start = millis();
+  while (millis() - start < timeoutMs) {
+    while (client.available()) {
+      char c = client.read();
+      response += c;
+      if (c == '\n') {
+        return response;
+      }
+    }
+    if (!client.connected() && !client.available()) {
+      break;
+    }
+    delay(5);
+  }
+  return response;
+}
+
+// Call remote cliamp daemon socket redirected to TCP port 8787 to load and play a playlist
+bool callCliampLoadAndPlay(const String &playlistId) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[cliamp] ERROR: Wi-Fi is offline. Cannot communicate with cliamp.");
+    return false;
+  }
+
+  IPAddress serverIP;
+  if (!serverIP.fromString(CLIAMP_SERVER_IP)) {
+    Serial.print("[cliamp] ERROR: Invalid server IP format: ");
+    Serial.println(CLIAMP_SERVER_IP);
+    return false;
+  }
+
+  Serial.println("\n------------------------------------------");
+  Serial.print("[cliamp] Connecting to remote cliamp server: ");
+  Serial.print(CLIAMP_SERVER_IP);
+  Serial.print(":");
+  Serial.println(CLIAMP_SERVER_PORT);
+
+  WiFiClient client;
+  if (!client.connect(serverIP, CLIAMP_SERVER_PORT)) {
+    Serial.println("[cliamp] ERROR: Failed to connect to remote cliamp server!");
+    Serial.println("[cliamp] Please ensure cliamp is running in daemon mode and socket is redirected to TCP 8787.");
+    Serial.println("------------------------------------------");
+    return false;
+  }
+
+  Serial.println("[cliamp] Connected successfully.");
+
+  // Construct V2 IPC operation.submit request for "load"
+  String escapedId = escapeJsonString(playlistId);
+  String loadRequest = "{\"version\":2,\"id\":\"load-1\",\"method\":\"provider.load\",\"wait\":true,\"params\":{\"provider\":\"navidrome\",\"playlist\":\"" + escapedId + "\"}}\n";
+
+  Serial.print("[cliamp] Sending 'load' operation for playlist: ");
+  Serial.println(playlistId);
+  Serial.print("[cliamp] Request Payload: ");
+  Serial.print(loadRequest);
+
+  client.print(loadRequest);
+  client.flush();
+
+  String loadResponse = readCliampResponse(client, 2000);
+  if (loadResponse.length() > 0) {
+    Serial.print("[cliamp] Load Response: ");
+    Serial.print(loadResponse);
+  } else {
+    Serial.println("[cliamp] No immediate response received for load operation.");
+  }
+
+  // Allow a short delay for cliamp daemon to queue the playlist tracks before starting playback
+  delay(200);
+
+  // If the server closed the connection after one request, reconnect for play
+  if (!client.connected()) {
+    Serial.println("[cliamp] Socket closed by server, reconnecting for 'play' operation...");
+    client.stop();
+    if (!client.connect(serverIP, CLIAMP_SERVER_PORT)) {
+      Serial.println("[cliamp] ERROR: Reconnection for play operation failed!");
+      Serial.println("------------------------------------------");
+      return false;
+    }
+  }
+
+  // Construct V2 IPC operation.submit request for "play"
+  String playRequest = "{\"version\":2,\"id\":\"play-1\",\"method\":\"operation.submit\",\"operation\":\"play\",\"params\":{}}\n";
+
+  Serial.println("[cliamp] Sending 'play' operation...");
+  Serial.print("[cliamp] Request Payload: ");
+  Serial.print(playRequest);
+
+  client.print(playRequest);
+  client.flush();
+
+  String playResponse = readCliampResponse(client, 2000);
+  if (playResponse.length() > 0) {
+    Serial.print("[cliamp] Play Response: ");
+    Serial.print(playResponse);
+  } else {
+    Serial.println("[cliamp] No immediate response received for play operation.");
+  }
+
+  client.stop();
+  Serial.println("[cliamp] Finished request, connection closed.");
+  Serial.println("------------------------------------------");
+  return true;
+}
 
 // Callback executed when WiFiManager enters AP (Access Point) mode
 void configModeCallback(WiFiManager *myWiFiManager) {
@@ -130,6 +303,7 @@ void handleDecodedUrl(const String &url) {
 
   // Iterate over query parameters (e.g. key=val separated by &)
   bool nfcFound = false;
+  String nfcValue = "";
   int startIdx = 0;
   while (startIdx < queryString.length()) {
     int ampIdx = queryString.indexOf('&', startIdx);
@@ -157,12 +331,24 @@ void handleDecodedUrl(const String &url) {
     // Check if 'nfc' key is defined
     if (key == "nfc") {
       nfcFound = true;
-      Serial.print("[Apple Music] 'nfc' key detected. Value: ");
-      Serial.println(value);
+      nfcValue = urlDecode(value);
+      Serial.print("[Apple Music] 'nfc' key detected. Raw: '");
+      Serial.print(value);
+      Serial.print("', Decoded: '");
+      Serial.print(nfcValue);
+      Serial.println("'");
+      break;
     }
   }
 
-  if (!nfcFound) {
+  if (nfcFound) {
+    if (nfcValue.length() > 0) {
+      // Call remote cliamp to load and play the playlist
+      callCliampLoadAndPlay(nfcValue);
+    } else {
+      Serial.println("[Apple Music] 'nfc' key value is empty.");
+    }
+  } else {
     Serial.println("[Apple Music] 'nfc' key is not defined in query.");
   }
 }

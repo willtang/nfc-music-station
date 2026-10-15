@@ -132,6 +132,16 @@ http.end();
 ### Option B: Spotify Connect / Media Controller
 Send an MQTT message or an HTTP POST request to a local server (Raspberry Pi, Home Assistant, or Spotify Web API daemon) to start playback on a target smart speaker or receiver.
 
+### Option C: Remote cliamp Music Player (Daemon Mode over TCP)
+When scanning an Apple Music NFC tag containing an `?nfc=<playlist_id>` parameter, the ESP32 automatically connects to a remote `cliamp` music daemon whose UNIX socket is redirected to TCP port `8787` (default server: `192.168.0.102`):
+1. Transmits an IPC V2 `operation.submit` request to `load` the specified playlist ID.
+2. Transmits an IPC V2 `operation.submit` request to `play` to start/resume playback.
+
+Example remote socket redirect command (on the server host):
+```bash
+socat TCP-LISTEN:8787,fork,reuseaddr UNIX-CONNECT:$HOME/.config/cliamp/cliamp.sock
+```
+
 ---
 
 ## 📁 Project Structure
