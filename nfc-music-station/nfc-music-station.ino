@@ -87,6 +87,83 @@ void initWiFi() {
   }
 }
 
+// Handle and parse decoded URL from NFC tag
+void handleDecodedUrl(const String &url) {
+  // Extract host from URL
+  int schemeEnd = url.indexOf("://");
+  int hostStart = (schemeEnd != -1) ? schemeEnd + 3 : 0;
+
+  int hostEnd = url.length();
+  int slashIdx = url.indexOf('/', hostStart);
+  int colonIdx = url.indexOf(':', hostStart);
+  int questionIdx = url.indexOf('?', hostStart);
+
+  if (slashIdx != -1 && slashIdx < hostEnd) hostEnd = slashIdx;
+  if (colonIdx != -1 && colonIdx < hostEnd) hostEnd = colonIdx;
+  if (questionIdx != -1 && questionIdx < hostEnd) hostEnd = questionIdx;
+
+  String host = url.substring(hostStart, hostEnd);
+  host.toLowerCase();
+
+  // Check if host is music.apple.com
+  if (host != "music.apple.com") {
+    return;
+  }
+
+  Serial.println("[Apple Music] Valid host identified: music.apple.com");
+
+  // Locate and parse query string
+  int queryIdx = url.indexOf('?');
+  if (queryIdx == -1) {
+    Serial.println("[Apple Music] No query parameters present in URL.");
+    return;
+  }
+
+  String queryString = url.substring(queryIdx + 1);
+  int hashIdx = queryString.indexOf('#');
+  if (hashIdx != -1) {
+    queryString = queryString.substring(0, hashIdx);
+  }
+
+  // Iterate over query parameters (e.g. key=val separated by &)
+  bool nfcFound = false;
+  int startIdx = 0;
+  while (startIdx < queryString.length()) {
+    int ampIdx = queryString.indexOf('&', startIdx);
+    String param;
+    if (ampIdx == -1) {
+      param = queryString.substring(startIdx);
+      startIdx = queryString.length();
+    } else {
+      param = queryString.substring(startIdx, ampIdx);
+      startIdx = ampIdx + 1;
+    }
+
+    if (param.length() == 0) continue;
+
+    int eqIdx = param.indexOf('=');
+    String key, value;
+    if (eqIdx != -1) {
+      key = param.substring(0, eqIdx);
+      value = param.substring(eqIdx + 1);
+    } else {
+      key = param;
+      value = "";
+    }
+
+    // Check if 'nfc' key is defined
+    if (key == "nfc") {
+      nfcFound = true;
+      Serial.print("[Apple Music] 'nfc' key detected. Value: ");
+      Serial.println(value);
+    }
+  }
+
+  if (!nfcFound) {
+    Serial.println("[Apple Music] 'nfc' key is not defined in query.");
+  }
+}
+
 void setup(void) {
   // delay(3000);
   Serial.begin(115200);
@@ -156,6 +233,9 @@ void loop(void) {
             Serial.print(">>> DECODED URL: "); 
             Serial.println(fullUrl);
             Serial.println("------------------------------------------");
+            
+            // Process the decoded URL
+            handleDecodedUrl(fullUrl);
             
             if (WiFi.status() == WL_CONNECTED) {
               Serial.println("[Wi-Fi] Status: Online (IP: " + WiFi.localIP().toString() + ")");
