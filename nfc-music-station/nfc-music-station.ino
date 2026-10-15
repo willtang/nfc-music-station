@@ -17,7 +17,7 @@
   #include <PN532_I2C.h>
   #include <PN532.h>
   PN532_I2C pn532i2c(Wire);
-  // PN532 nfc(pn532i2c);	
+  PN532 pn532(pn532i2c);
 #endif
 
 #include <NfcAdapter.h>
@@ -35,6 +35,7 @@ NfcAdapter nfc = NfcAdapter(pn532i2c);
 
 // Track active NFC card UID to prevent duplicate processing
 String savedCardId = "";
+int cardMissCount = 0;
 
 // Helper function to decode URL percent-encoded characters (e.g. %20 -> space, + -> space)
 String urlDecode(const String &input) {
@@ -364,6 +365,8 @@ void setup(void) {
 
   // Initialize the NDEF adapter layer (module connection)
   nfc.begin();
+  // Configure PN532 RF retries so presence checking is fast and non-blocking
+  pn532.setPassiveActivationRetries(0x02);
   Serial.println("[NFC] PN532 module initialized successfully.");
 
   // Connect to Wi-Fi after module connection
@@ -375,21 +378,41 @@ void setup(void) {
 }
 
 void loop(void) {
-  if (nfc.tagPresent()) {
-    // Automatically reads the tag footprint and safely determines storage sizing
+  // If a card is already active on the reader, monitor its presence without calling nfc.read().
+  // Calling nfc.read() on every loop cycle causes redundant sector/block reads over RF;
+  // when the user pulls the card away mid-read, the RF link is broken during a block transfer,
+  // causing the driver to print "Read failed <page/block>" instead of detecting tag removal.
+  if (savedCardId.length() > 0) {
+    if (nfc.tagPresent(100)) {
+      // Card is still present on the reader
+      cardMissCount = 0;
+      delay(100);
+      return;
+    } else {
+      // Card was not detected in this polling cycle
+      cardMissCount++;
+      // Debounce: require 2 consecutive misses (~150-200ms) to confirm card has been removed
+      if (cardMissCount >= 2) {
+        Serial.print("\n[NFC] Card removed (UID: ");
+        Serial.print(savedCardId);
+        Serial.println("). Ready for next card.");
+        savedCardId = "";
+        cardMissCount = 0;
+      }
+      delay(50);
+      return;
+    }
+  }
+
+  // When no card is active, check for the arrival of a new tag
+  cardMissCount = 0;
+  if (nfc.tagPresent(100)) {
+    // A new tag was detected! Read NDEF structure once.
     NfcTag tag = nfc.read();
     String cardId = tag.getUidString();
 
     // Verify a valid UID was obtained
     if (cardId.length() > 0) {
-      // Check if the same NFC card is already present
-      if (cardId == savedCardId) {
-        // Do not re-process if the same card is still here
-        delay(150);
-        return;
-      }
-
-      // New card detected; save card ID and proceed with processing
       savedCardId = cardId;
 
       Serial.println("\n>>> Tag Detected! Reading NDEF Structure...");
@@ -458,14 +481,7 @@ void loop(void) {
 
       Serial.println("==========================================");
     }
-  } else {
-    // When the card leaves the RF field, reset the saved card ID
-    if (savedCardId != "") {
-      Serial.print("\n[NFC] Card removed (UID: ");
-      Serial.print(savedCardId);
-      Serial.println("). Ready for next card.");
-      savedCardId = "";
-    }
   }
+
   delay(100);
 }
