@@ -28,6 +28,9 @@
 
 NfcAdapter nfc = NfcAdapter(pn532i2c);
 
+// Track active NFC card UID to prevent duplicate processing
+String savedCardId = "";
+
 // Callback executed when WiFiManager enters AP (Access Point) mode
 void configModeCallback(WiFiManager *myWiFiManager) {
   Serial.println("\n------------------------------------------");
@@ -187,76 +190,96 @@ void setup(void) {
 
 void loop(void) {
   if (nfc.tagPresent()) {
-    Serial.println("\n>>> Tag Detected! Reading NDEF Structure...");
-    
     // Automatically reads the tag footprint and safely determines storage sizing
     NfcTag tag = nfc.read();
-    
-    Serial.println("------------------------------------------");
-    Serial.print("Tag Type:     "); Serial.println(tag.getTagType());
-    Serial.print("UID Value:    "); Serial.println(tag.getUidString());
-    
-    if (tag.hasNdefMessage()) {
-      NdefMessage message = tag.getNdefMessage();
-      
-      for (int i = 0; i < message.getRecordCount(); i++) {
-        NdefRecord record = message.getRecord(i);
-        
-        // Target Well-Known Type: URI (TNF 1, Type "U")
-        if (record.getTnf() == 1 && record.getType() == "U") {
-          int payloadLength = record.getPayloadLength();
-          
-          // Safe explicit heap allocation to protect the ESP32-C3 stack boundaries
-          byte* payloadBuffer = (byte*)malloc(payloadLength);
-          
-          if (payloadBuffer != NULL) {
-            record.getPayload(payloadBuffer);
-            
-            // Extract the NDEF URI prefix shorthand code
-            byte prefixId = payloadBuffer[0];
-            String fullUrl = "";
-            
-            if (prefixId == 0x01)      fullUrl = "http://www.";
-            else if (prefixId == 0x02) fullUrl = "https://www.";
-            else if (prefixId == 0x03) fullUrl = "http://";
-            else if (prefixId == 0x04) fullUrl = "https://";
-            
-            // Append the remaining alphanumeric string payload bytes cleanly
-            for (int j = 1; j < payloadLength; j++) {
-              char c = (char)payloadBuffer[j];
-              if (c >= 32 && c <= 126) { // Drop non-printable padding noise
-                fullUrl += c;
-              }
-            }
-            
-            Serial.println("------------------------------------------");
-            Serial.print(">>> DECODED URL: "); 
-            Serial.println(fullUrl);
-            Serial.println("------------------------------------------");
-            
-            // Process the decoded URL
-            handleDecodedUrl(fullUrl);
-            
-            if (WiFi.status() == WL_CONNECTED) {
-              Serial.println("[Wi-Fi] Status: Online (IP: " + WiFi.localIP().toString() + ")");
-            } else {
-              Serial.println("[Wi-Fi] Status: Offline");
-            }
-            
-            // Free the allocated memory allocation immediately to avoid future system crashes
-            free(payloadBuffer);
-          }
-        } else {
-          Serial.print("Skipping non-URI Record Type: "); 
-          Serial.println(record.getType());
-        }
+    String cardId = tag.getUidString();
+
+    // Verify a valid UID was obtained
+    if (cardId.length() > 0) {
+      // Check if the same NFC card is already present
+      if (cardId == savedCardId) {
+        // Do not re-process if the same card is still here
+        delay(150);
+        return;
       }
-    } else {
-      Serial.println("\n[Notice] Tag is discovered but it contains no active NDEF records.");
+
+      // New card detected; save card ID and proceed with processing
+      savedCardId = cardId;
+
+      Serial.println("\n>>> Tag Detected! Reading NDEF Structure...");
+      Serial.println("------------------------------------------");
+      Serial.print("Tag Type:     "); Serial.println(tag.getTagType());
+      Serial.print("UID Value:    "); Serial.println(cardId);
+
+      if (tag.hasNdefMessage()) {
+        NdefMessage message = tag.getNdefMessage();
+
+        for (int i = 0; i < message.getRecordCount(); i++) {
+          NdefRecord record = message.getRecord(i);
+
+          // Target Well-Known Type: URI (TNF 1, Type "U")
+          if (record.getTnf() == 1 && record.getType() == "U") {
+            int payloadLength = record.getPayloadLength();
+
+            // Safe explicit heap allocation to protect the ESP32-C3 stack boundaries
+            byte* payloadBuffer = (byte*)malloc(payloadLength);
+
+            if (payloadBuffer != NULL) {
+              record.getPayload(payloadBuffer);
+
+              // Extract the NDEF URI prefix shorthand code
+              byte prefixId = payloadBuffer[0];
+              String fullUrl = "";
+
+              if (prefixId == 0x01)      fullUrl = "http://www.";
+              else if (prefixId == 0x02) fullUrl = "https://www.";
+              else if (prefixId == 0x03) fullUrl = "http://";
+              else if (prefixId == 0x04) fullUrl = "https://";
+
+              // Append the remaining alphanumeric string payload bytes cleanly
+              for (int j = 1; j < payloadLength; j++) {
+                char c = (char)payloadBuffer[j];
+                if (c >= 32 && c <= 126) { // Drop non-printable padding noise
+                  fullUrl += c;
+                }
+              }
+
+              Serial.println("------------------------------------------");
+              Serial.print(">>> DECODED URL: "); 
+              Serial.println(fullUrl);
+              Serial.println("------------------------------------------");
+
+              // Process the decoded URL
+              handleDecodedUrl(fullUrl);
+
+              if (WiFi.status() == WL_CONNECTED) {
+                Serial.println("[Wi-Fi] Status: Online (IP: " + WiFi.localIP().toString() + ")");
+              } else {
+                Serial.println("[Wi-Fi] Status: Offline");
+              }
+
+              // Free the allocated memory allocation immediately to avoid future system crashes
+              free(payloadBuffer);
+            }
+          } else {
+            Serial.print("Skipping non-URI Record Type: "); 
+            Serial.println(record.getType());
+          }
+        }
+      } else {
+        Serial.println("\n[Notice] Tag is discovered but it contains no active NDEF records.");
+      }
+
+      Serial.println("==========================================");
     }
-    
-    Serial.println("==========================================");
-    delay(3000); // Guard time to allow card removal
+  } else {
+    // When the card leaves the RF field, reset the saved card ID
+    if (savedCardId != "") {
+      Serial.print("\n[NFC] Card removed (UID: ");
+      Serial.print(savedCardId);
+      Serial.println("). Ready for next card.");
+      savedCardId = "";
+    }
   }
   delay(100);
 }
